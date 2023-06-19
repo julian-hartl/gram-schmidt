@@ -1,11 +1,13 @@
 #![allow(clippy::needless_return)]
 
 use std::iter::Sum;
-use std::ops::{Add, Div, Index, Mul, Sub};
+use std::ops::{Add, Div, Index, IndexMut, Mul, Sub};
+use std::ptr;
 
 pub trait Vector where
     Self: Sized
     + Index<usize, Output=f64>
+    + IndexMut<usize>
     + Clone
     + Mul<f64, Output=Self>
     + Add<Output=Self>
@@ -16,6 +18,8 @@ pub trait Vector where
 
     fn get_component(&self, index: usize) -> f64;
 
+    fn get_components_mut(&mut self) -> &mut [f64];
+
     fn dot_product(v1: &Self, v2: &Self) -> f64 {
         let mut sum = 0.0;
         for i in 0..Self::DIM {
@@ -24,37 +28,44 @@ pub trait Vector where
         return sum;
     }
 
-    fn gram_schmidt(
-        basis: Vec<Self>,
-    ) -> Vec<Self> {
-        let mut nb = Vec::with_capacity(basis.len());
-        for (index, b) in basis.into_iter().enumerate() {
-            if index == 0 {
-                nb.push(b.normalize());
-                continue;
-            }
-
-            let c =
-                nb[0..index]
-                    .iter()
-                    .cloned()
-                    .map(|v| {
-                        let dot = Self::dot_product(&v, &b);
-                        return v * dot;
-                    })
-                    .sum::<Self>() * -1. + b;
-            nb.push(c.normalize());
+    fn scale_with_dot_prod(&mut self, v2: &Self) {
+        for i in 0..Self::DIM {
+            self[i] = self[i] * self[i] * v2[i];
         }
-        return nb;
+    }
+
+    #[inline(never)]
+    fn gram_schmidt(
+        basis: &mut Vec<Self>,
+    ) {
+        basis[0].normalize();
+        for index in 1..basis.len() {
+            let (first_half, second_half) = basis.split_at_mut(index);
+            let a = &mut second_half[0];
+            let sum: Self = first_half
+                .iter()
+                .cloned()
+                .map(|b|
+                    {
+                        let dot = Vector::dot_product(a, &b);
+                        b.scale(dot)
+                    }
+                )
+                .sum();
+            let mut c: Self = a.clone() - sum;
+            c.normalize();
+            // No conflict here because b is in second_half
+            *a = c;
+        }
     }
 
     fn length(&self) -> f64 {
         return Self::dot_product(self, self).sqrt();
     }
 
-    fn normalize(self) -> Self where Self: Sized {
+    fn normalize(&mut self) {
         let len = self.length();
-        return self / len;
+        self.get_components_mut().iter_mut().for_each(|c| *c /= len);
     }
 
     fn scale(self, lambda: f64) -> Self {
@@ -146,12 +157,22 @@ macro_rules! vector {
             }
         }
 
+        impl IndexMut<usize> for $name {
+            fn index_mut(&mut self, index: usize) -> &mut Self::Output {
+                return &mut self.components[index];
+            }
+        }
+
         impl Vector for $name {
 
             const DIM: usize = $dim;
 
             fn get_component(&self, index: usize) -> f64 {
                 return self.components[index];
+            }
+
+            fn get_components_mut(&mut self) -> &mut [f64] {
+                return &mut self.components;
             }
         }
     };
@@ -175,9 +196,18 @@ mod vec3_test {
     }
 
     #[test]
+    fn scale_with_dot_prod() {
+        let mut v1 = Vector4::new([1.0, 2.0, 3.0, 6.0]);
+        let v2 = Vector4::new([3.0, 4.0, 5.0, 7.0]);
+        v1.scale_with_dot_prod(&v2);
+        assert_eq!(v1, Vector4::new([3.0, 16.0, 45.0, 252.0]));
+    }
+
+    #[test]
     fn test_normalize() {
-        let v1 = Vector4::new([4.0, 4.0, 4.0, 4.0]);
-        assert_eq!(v1.normalize(), Vector4::new([4.0 / 8.0, 4.0 / 8.0, 4.0 / 8.0, 4.0 / 8.0]));
+        let mut v1 = Vector4::new([4.0, 4.0, 4.0, 4.0]);
+        v1.normalize();
+        assert_eq!(v1, Vector4::new([4.0 / 8.0, 4.0 / 8.0, 4.0 / 8.0, 4.0 / 8.0]));
     }
 
     #[test]
@@ -195,18 +225,18 @@ mod grim_schmidt_test {
 
     #[test]
     fn basic_test() {
-        let basis = [
+        let mut basis = vec![
             Vector4::new([1.0, 1.0, 1.0, 1.0]),
             Vector4::new([0.0, 1.0, 0.0, 1.0]),
             Vector4::new([0.0, 0.0, 1.0, 1.0]),
             Vector4::new([0.0, 0.0, 0.0, 1.0]),
         ];
-        let nb = Vector4::gram_schmidt(basis.to_vec());
+        Vector4::gram_schmidt(&mut basis);
         assert_eq!(vec![
             Vector4::new([0.5, 0.5, 0.5, 0.5]),
             Vector4::new([-0.5, 0.5, -0.5, 0.5]),
             Vector4::new([-0.5, -0.5, 0.5, 0.5]),
             Vector4::new([0.5, -0.5, -0.5, 0.5]),
-        ], nb);
+        ], basis);
     }
 }
