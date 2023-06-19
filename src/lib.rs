@@ -34,30 +34,6 @@ pub trait Vector where
         }
     }
 
-    #[inline(never)]
-    fn gram_schmidt(
-        basis: &mut Vec<Self>,
-    ) {
-        basis[0].normalize();
-        for index in 1..basis.len() {
-            let (first_half, second_half) = basis.split_at_mut(index);
-            let a = &mut second_half[0];
-            let sum: Self = first_half
-                .iter()
-                .cloned()
-                .map(|b|
-                    {
-                        let dot = Vector::dot_product(a, &b);
-                        b.scale(dot)
-                    }
-                )
-                .sum();
-            let mut c: Self = a.clone() - sum;
-            c.normalize();
-            // No conflict here because b is in second_half
-            *a = c;
-        }
-    }
 
     fn length(&self) -> f64 {
         return Self::dot_product(self, self).sqrt();
@@ -70,6 +46,12 @@ pub trait Vector where
 
     fn scale(self, lambda: f64) -> Self {
         return self * lambda;
+    }
+
+    fn sub(&mut self, other: &Self) {
+        for i in 0..Self::DIM {
+            self[i] -= other[i];
+        }
     }
 }
 
@@ -90,6 +72,30 @@ macro_rules! vector {
             pub fn empty() -> Self {
                 return Self { components: [0.0; Self::DIM] };
             }
+
+            pub fn scaled_copy(&self, lambda: f64) -> Self {
+                let mut components = [0.0; Self::DIM];
+                for i in 0..Self::DIM {
+                    components[i] = self.components[i] * lambda;
+                }
+                return Self { components };
+            }
+
+            #[inline(never)]
+    pub fn gram_schmidt(
+        basis: &mut Vec<Self>,
+    ) {
+        basis[0].normalize();
+        for index in 1..basis.len() {
+            let (first_half, second_half) = basis.split_at_mut(index);
+            let a = &mut second_half[0];
+            for b in first_half.iter() {
+                let dot = Vector::dot_product(a, &b);
+                a.sub(&b.scaled_copy(dot));
+            }
+            a.normalize();
+        }
+    }
         }
 
         impl Add for $name {
